@@ -1,0 +1,262 @@
+version: "3.9"
+
+# =====================================================================
+# DTASS Phase 1 — Local docker-compose Swarm Simulation
+# 6-node representative simulation, single host, no cloud dependency
+# =====================================================================
+
+networks:
+  swarm-net:
+    driver: bridge
+
+volumes:
+  ledger-data:
+  mlflow-data:
+  prometheus-data:
+  grafana-data:
+
+# =====================================================================
+# Shared node environment template (YAML anchors)
+# =====================================================================
+x-node-env: &node-env
+  MQTT_HOST: mosquitto
+  MQTT_PORT: "1883"
+  LEDGER_URL: http://ledger-service:8000
+  MLFLOW_URL: http://mlflow:5000
+  KEYS_DIR: /app/keys
+  METRICS_PORT: "8080"
+  BATCH_SLEEP_S: "2"
+
+x-node-depends: &node-depends
+  mosquitto:
+    condition: service_started
+  ledger-service:
+    condition: service_healthy
+  mlflow:
+    condition: service_started
+
+x-node-keys-volume: &keys-ro
+  - ./keys:/app/keys:ro
+
+# =====================================================================
+services:
+# ─────────────────────────────────────────────────────────────────────
+# MQTT broker (gossip / pub-sub layer)
+# Phase 2 replacement: AWS IoT Core (same MQTT contract)
+# ─────────────────────────────────────────────────────────────────────
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: dtass-mosquitto
+    ports:
+      - "1883:1883"
+      - "9001:9001"   # WebSocket port for optional browser debugging
+    volumes:
+      - ./monitoring/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    networks:
+      - swarm-net
+    restart: unless-stopped
+
+# ─────────────────────────────────────────────────────────────────────
+# Ledger service (atomic lease arbitration)
+# Phase 2 replacement: DynamoDB conditional writes
+# ─────────────────────────────────────────────────────────────────────
+  ledger-service:
+    build:
+      context: ./ledger-service
+      dockerfile: Dockerfile
+    container_name: dtass-ledger
+    ports:
+      - "8000:8000"
+    volumes:
+      - ledger-data:/data
+    networks:
+      - swarm-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+# ─────────────────────────────────────────────────────────────────────
+# MLflow (experiment tracking)
+# ─────────────────────────────────────────────────────────────────────
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.11.0
+    container_name: dtass-mlflow
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --default-artifact-root /mlflow/artifacts
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow-data:/mlflow
+    networks:
+      - swarm-net
+    restart: unless-stopped
+
+# ─────────────────────────────────────────────────────────────────────
+# Node containers (6 nodes, shared codebase, different NODE_ID + data)
+# Phase 2 replacement: each → its own AWS account / Lambda
+# ─────────────────────────────────────────────────────────────────────
+
+  node-ca:
+    build:
+      context: ./node
+      dockerfile: Dockerfile
+    container_name: dtass-node-ca
+    environment:
+      <<: *node-env
+      NODE_ID: CA
+      DATA_DIR: /app/data
+    volumes:
+      - ./data/CA:/app/data:ro
+      - ./keys:/app/keys:ro
+    ports:
+      - "8081:8080"
+    networks:
+      - swarm-net
+    depends_on: *node-depends
+    restart: unless-stopped
+
+  node-tx:
+    build:
+      context: ./node
+      dockerfile: Dockerfile
+    container_name: dtass-node-tx
+    environment:
+      <<: *node-env
+      NODE_ID: TX
+      DATA_DIR: /app/data
+    volumes:
+      - ./data/TX:/app/data:ro
+      - ./keys:/app/keys:ro
+    ports:
+      - "8082:8080"
+    networks:
+      - swarm-net
+    depends_on: *node-depends
+    restart: unless-stopped
+
+  node-oh:
+    build:
+      context: ./node
+      dockerfile: Dockerfile
+    container_name: dtass-node-oh
+    environment:
+      <<: *node-env
+      NODE_ID: OH
+      DATA_DIR: /app/data
+    volumes:
+      - ./data/OH:/app/data:ro
+      - ./keys:/app/keys:ro
+    ports:
+      - "8083:8080"
+    networks:
+      - swarm-net
+    depends_on: *node-depends
+    restart: unless-stopped
+
+  node-wy:
+    build:
+      context: ./node
+      dockerfile: Dockerfile
+    container_name: dtass-node-wy
+    environment:
+      <<: *node-env
+      NODE_ID: WY
+      DATA_DIR: /app/data
+      BATCH_SLEEP_S: "3"   # WY is small — slow it down slightly
+    volumes:
+      - ./data/WY:/app/data:ro
+      - ./keys:/app/keys:ro
+    ports:
+      - "8084:8080"
+    networks:
+      - swarm-net
+    depends_on: *node-depends
+    restart: unless-stopped
+
+  node-ny:
+    build:
+      context: ./node
+      dockerfile: Dockerfile
+    container_name: dtass-node-ny
+    environment:
+      <<: *node-env
+      NODE_ID: NY
+      DATA_DIR: /app/data
+    volumes:
+      - ./data/NY:/app/data:ro
+      - ./keys:/app/keys:ro
+    ports:
+      - "8085:8080"
+    networks:
+      - swarm-net
+    depends_on: *node-depends
+    restart: unless-stopped
+
+  node-nj:
+    build:
+      context: ./node
+      dockerfile: Dockerfile
+    container_name: dtass-node-nj
+    environment:
+      <<: *node-env
+      NODE_ID: NJ
+      DATA_DIR: /app/data
+    volumes:
+      - ./data/NJ:/app/data:ro
+      - ./keys:/app/keys:ro
+    ports:
+      - "8086:8080"
+    networks:
+      - swarm-net
+    depends_on: *node-depends
+    restart: unless-stopped
+
+# ─────────────────────────────────────────────────────────────────────
+# Monitoring stack
+# Phase 2 replacement: CloudWatch + Amazon Managed Grafana
+# ─────────────────────────────────────────────────────────────────────
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: dtass-prometheus
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/etc/prometheus/console_libraries"
+      - "--web.console.templates=/etc/prometheus/consoles"
+      - "--storage.tsdb.retention.time=7d"
+    ports:
+      - "9090:9090"
+    networks:
+      - swarm-net
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.3.0
+    container_name: dtass-grafana
+    ports:
+      - "3005:3000"   # Changed from 3000:3000
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: dtass2024
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/dtass.json
+    networks:
+      - swarm-net
+    depends_on:
+      - prometheus
+    restart: unless-stopped

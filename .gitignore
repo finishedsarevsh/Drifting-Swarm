@@ -1,0 +1,82 @@
+# =============================================================================
+# DTASS Phase 1 — .gitignore
+# =============================================================================
+
+# ── Cryptographic keys — NEVER commit private keys ────────────────────────────
+keys/
+!keys/.gitkeep
+
+# ── BRFSS data — CSVs are large and reproducible via download_real_brfss.R ───
+data/*/brfss_*.csv
+data/*/brfss_*.csv.gz
+!data/*/.gitkeep
+
+# R data cache (brfssdata package caches XPT files here) ─────────────────────
+# These can be hundreds of MB; regenerate with Rscript scripts/download_real_brfss.R
+.brfssdata_cache/
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+pip-wheel-metadata/
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── MLflow local artifacts (reproduced by running the simulation) ─────────────
+# The SQLite DB and artifact blobs are written to the mlflow-data Docker volume,
+# but if you ever mount them locally, exclude them here.
+mlflow.db
+mlruns/
+mlartifacts/
+
+# ── Prometheus local storage (tsdb, if ever bind-mounted) ────────────────────
+prometheus_data/
+
+# ── Grafana local storage (if ever bind-mounted) ──────────────────────────────
+grafana_data/
+
+# ── Ledger SQLite DB (written inside the ledger-data Docker volume) ───────────
+ledger.db
+
+# ── R session artifacts ───────────────────────────────────────────────────────
+.Rhistory
+.Rdata
+.Rproj.user/
+*.Rproj
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Jupyter (if used for analysis) ───────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb

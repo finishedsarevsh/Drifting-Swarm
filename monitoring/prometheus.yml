@@ -1,0 +1,22 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'dtass-nodes'
+    static_configs:
+      - targets:
+          - 'node-ca:8080'
+          - 'node-tx:8080'
+          - 'node-oh:8080'
+          - 'node-wy:8080'
+          - 'node-ny:8080'
+          - 'node-nj:8080'
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  - job_name: 'ledger-service'
+    static_configs:
+      - targets: ['ledger-service:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
