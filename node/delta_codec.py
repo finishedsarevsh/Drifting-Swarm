@@ -10,14 +10,11 @@ with the same sign/verify call signatures — no application code changes.
 
 import json
 import logging
-import os
 import pickle
-import struct
 import time
+import zlib
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
-
-import numpy as np
 
 try:
     from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -39,13 +36,6 @@ except ImportError:
     logging.warning("cryptography package not installed – signatures will be SKIPPED (dev mode only)")
 
 logger = logging.getLogger(__name__)
-
-# ------------------------------------------------------------------
-# Quantisation settings
-# ------------------------------------------------------------------
-QUANTISE_BITS = 8          # 8-bit quantisation of ΔW values
-SPARSITY_THRESHOLD = 0.01  # drop |ΔW| < threshold (1% of weight scale)
-
 
 # ------------------------------------------------------------------
 # Key management helpers
@@ -121,105 +111,55 @@ def _load_public_key(keys_dir: Path, sender_node_id: str) -> Optional[Any]:
 
 
 # ------------------------------------------------------------------
-# ΔW serialisation helpers
-# ------------------------------------------------------------------
-
-def _extract_weights(model: Any) -> Optional[np.ndarray]:
-    """
-    Extract a flat numpy weight vector from a LightGBM model or any
-    object that supports pickle serialisation.  Returns None if model
-    is None or unserializable.
-    """
-    if model is None:
-        return None
-    try:
-        raw = pickle.dumps(model)
-        return np.frombuffer(raw, dtype=np.uint8).astype(np.float32)
-    except Exception as exc:
-        logger.warning("Could not extract weights: %s", exc)
-        return None
-
-
-def _sparsify(delta: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    """Return (indices, values) for non-trivial entries."""
-    mask = np.abs(delta) >= SPARSITY_THRESHOLD
-    return np.where(mask)[0].astype(np.int32), delta[mask].astype(np.float32)
-
-
-def _quantise(values: np.ndarray, bits: int = QUANTISE_BITS) -> Tuple[bytes, float, float]:
-    """
-    Quantise float32 values to `bits`-bit unsigned integers.
-    Returns (quantised_bytes, min_val, scale).
-    """
-    if len(values) == 0:
-        return b"", 0.0, 1.0
-    v_min = float(values.min())
-    v_max = float(values.max())
-    scale = (v_max - v_min) / (2**bits - 1) if v_max != v_min else 1.0
-    quantised = np.round((values - v_min) / scale).astype(np.uint8)
-    return quantised.tobytes(), v_min, scale
-
-
-def _dequantise(data: bytes, length: int, v_min: float, scale: float) -> np.ndarray:
-    quantised = np.frombuffer(data, dtype=np.uint8)[:length]
-    return quantised.astype(np.float32) * scale + v_min
-
-
-# ------------------------------------------------------------------
 # Public API
 # ------------------------------------------------------------------
 
 class DeltaCodec:
     """
-    Encode (sparsify + quantise + sign) and decode (verify + apply) ΔW packages.
+    Encode (compress + sign) and decode (verify + load) model packages.
+    
+    Instead of naive array math on bytes, we compress the entire tree ensemble.
+    Since trees are bounded (MAX_TOTAL_TREES), the compressed payload stays
+    very small (< 5 MB) and accurately preserves the ensemble structure.
 
     Package format (JSON-serialisable dict):
     {
         "node_id":   str,
         "epoch":     str,
         "timestamp": float,
-        "n_total":   int,        # length of original weight vector
-        "indices":   [int, ...],
-        "q_bytes":   hex_string, # quantised values
-        "q_min":     float,
-        "q_scale":   float,
-        "signature": hex_string, # Ed25519 over sha256(payload_without_sig)
+        "n_trees":   int,
+        "model_bytes": hex_string, # zlib compressed pickle
+        "signature": hex_string,
     }
     """
 
     def __init__(self, node_id: str, keys_dir: str):
         self.node_id = node_id
         self.keys_dir = Path(keys_dir)
-        self._prev_weights: Optional[np.ndarray] = None
 
     # ------------------------------------------------------------------
     def encode(self, model: Any, epoch: str) -> Dict:
         """
-        Build a signed ΔW package from the current model vs the previous snapshot.
-
-        If no previous snapshot exists (first epoch), ΔW = W (full weights).
+        Build a signed model package from the current model.
         """
-        current_w = _extract_weights(model)
-        if current_w is None:
-            raise ValueError("Cannot extract weights from model")
+        if model is None:
+            raise ValueError("Cannot encode None model")
 
-        if self._prev_weights is not None and len(self._prev_weights) == len(current_w):
-            delta = current_w - self._prev_weights
-        else:
-            delta = current_w.copy()  # first epoch: full weights
+        try:
+            raw_bytes = pickle.dumps(model)
+            comp_bytes = zlib.compress(raw_bytes)
+        except Exception as exc:
+            logger.error("[%s] Model serialization failed: %s", self.node_id, exc)
+            raise
 
-        indices, values = _sparsify(delta)
-        q_bytes, q_min, q_scale = _quantise(values)
-
+        n_trees = getattr(model, "n_estimators_", 0)
+        
         payload = {
             "node_id": self.node_id,
             "epoch": epoch,
             "timestamp": time.time(),
-            "n_total": int(len(current_w)),
-            "indices": indices.tolist(),
-            "q_bytes": q_bytes.hex(),
-            "q_min": q_min,
-            "q_scale": q_scale,
+            "n_trees": n_trees,
+            "model_bytes": comp_bytes.hex(),
         }
 
         # sign
@@ -231,12 +171,9 @@ class DeltaCodec:
         else:
             payload["signature"] = ""
 
-        self._prev_weights = current_w.copy()
-        nnz = len(indices)
-        total = len(current_w)
         logger.info(
-            "[%s] ΔW encoded: %d/%d non-zero (%.1f%%), %d bytes after quantisation",
-            self.node_id, nnz, total, 100 * nnz / max(total, 1), len(q_bytes),
+            "[%s] Model encoded: %d trees, %d bytes compressed (was %d bytes)",
+            self.node_id, n_trees, len(comp_bytes), len(raw_bytes)
         )
         return payload
 
@@ -247,14 +184,13 @@ class DeltaCodec:
         current_model: Any,
     ) -> Tuple[bool, Optional[Any]]:
         """
-        Verify signature and apply ΔW to `current_model`.
+        Verify signature and load model from package.
 
         Returns
         -------
         (ok, updated_model)
-            ok            : False if signature invalid
-            updated_model : model with ΔW applied (pickle-round-tripped),
-                            or None if verification failed
+            ok            : False if signature invalid or schema mismatch
+            updated_model : model decompressed from package, or None if failed
         """
         sender = package.get("node_id", "")
         signature_hex = package.get("signature", "")
@@ -264,41 +200,40 @@ class DeltaCodec:
         if signature_hex and CRYPTO_AVAILABLE:
             public_key = _load_public_key(self.keys_dir, sender)
             if public_key is None:
-                logger.error("Cannot verify ΔW from %s – public key missing", sender)
+                logger.error("Cannot verify package from %s – public key missing", sender)
                 return False, None
             try:
                 public_key.verify(bytes.fromhex(signature_hex), payload_bytes)
-                logger.debug("[%s] Signature verified for ΔW from %s", self.node_id, sender)
+                logger.debug("[%s] Signature verified for package from %s", self.node_id, sender)
             except InvalidSignature:
-                logger.error("[%s] INVALID SIGNATURE on ΔW from %s – rejecting", self.node_id, sender)
+                logger.error("[%s] INVALID SIGNATURE on package from %s – rejecting", self.node_id, sender)
                 return False, None
         else:
-            logger.warning("[%s] No signature / crypto unavailable – accepting ΔW without verification", self.node_id)
+            logger.warning("[%s] No signature / crypto unavailable – accepting package without verification", self.node_id)
 
-        # reconstruct ΔW and apply to current weights
-        current_w = _extract_weights(current_model)
-        if current_w is None:
-            return True, current_model  # can't apply, but not a security failure
-
-        n_total = package["n_total"]
-        indices = np.array(package["indices"], dtype=np.int32)
-        q_bytes = bytes.fromhex(package["q_bytes"])
-        values = _dequantise(q_bytes, len(indices), package["q_min"], package["q_scale"])
-
-        if len(current_w) != n_total:
-            logger.warning(
-                "[%s] Weight size mismatch (local=%d, package=%d) – cannot apply ΔW",
-                self.node_id, len(current_w), n_total,
-            )
-            return True, current_model
-
-        current_w[indices] += values
-        # Reconstruct model from updated weights
         try:
-            updated_model = pickle.loads(current_w.astype(np.uint8).tobytes())
-        except Exception:
-            updated_model = current_model  # reconstruction failed, keep old
-            logger.warning("[%s] ΔW apply: pickle reconstruction failed – keeping old model", self.node_id)
+            comp_bytes = bytes.fromhex(package["model_bytes"])
+            raw_bytes = zlib.decompress(comp_bytes)
+            updated_model = pickle.loads(raw_bytes)
+            
+            # Simple schema validation (prevent 20-feat model from poisoning 15-feat swarm)
+            if current_model is not None:
+                curr_feat = getattr(current_model, "n_features_in_", None)
+                new_feat = getattr(updated_model, "n_features_in_", None)
+                if curr_feat is not None and new_feat is not None and curr_feat != new_feat:
+                    logger.error(
+                        "[%s] Schema mismatch: local model has %d features but incoming "
+                        "model expects %d features (sender=%s, epoch=%s). "
+                        "Rejecting package.",
+                        self.node_id, curr_feat, new_feat, sender, package.get("epoch", "?")
+                    )
+                    return False, None
+                
+        except Exception as exc:
+            logger.error("[%s] Model reconstruction failed: %s", self.node_id, exc)
+            return False, None
 
-        logger.info("[%s] ΔW applied from %s (epoch=%s)", self.node_id, sender, package.get("epoch"))
+        n_trees = package.get("n_trees", getattr(updated_model, "n_estimators_", 0))
+        logger.info("[%s] Model applied from %s (epoch=%s, trees=%d)", 
+                    self.node_id, sender, package.get("epoch"), n_trees)
         return True, updated_model

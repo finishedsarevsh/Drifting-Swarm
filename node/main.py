@@ -43,6 +43,7 @@ from mqtt_client import MQTTClient
 
 # ---- optional dependencies ----
 try:
+    # pyrefly: ignore [missing-import]
     import mlflow
     MLFLOW_AVAILABLE = True
 except ImportError:
@@ -181,16 +182,30 @@ def run():
         # 4. Process any incoming ΔW packages first (apply regardless of own drift)
         pending = mqtt.get_pending_deltas()
         for pkg in pending:
+            sender = pkg.get("node_id", "?")
             t0 = time.time()
             ok, updated_model = codec.verify_and_apply(pkg, retrainer.model)
             lat = time.time() - t0
-            if ok and updated_model is not None:
+
+            if ok and updated_model is not None and updated_model is not retrainer.model:
+                # Genuine successful apply: new model object returned
                 retrainer._model = updated_model
                 retrainer._model_version += 1
                 ledger.report_version(pkg.get("epoch", "?"), retrainer.model_version)
                 _prom_set(G_APPLY_LAT, lat, NODE_ID)
                 _prom_set(G_MODEL_VER, retrainer.model_version, NODE_ID)
-                logger.info("[%s] Applied ΔW from %s in %.3fs", NODE_ID, pkg.get("node_id"), lat)
+                logger.info(
+                    "[%s] Applied ΔW from %s in %.3fs (model v%d)",
+                    NODE_ID, sender, lat, retrainer.model_version,
+                )
+            elif not ok:
+                # Hard rejection (schema mismatch, bad signature, etc.)
+                logger.error(
+                    "[%s] ΔW from %s REJECTED (epoch=%s) — model NOT updated. "
+                    "Check for CSV schema mismatch between nodes.",
+                    NODE_ID, sender, pkg.get("epoch", "?"),
+                )
+
 
         # 5. If drift detected → attempt to claim the epoch lease
         if drift:

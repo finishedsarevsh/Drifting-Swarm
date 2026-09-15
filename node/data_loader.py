@@ -98,8 +98,50 @@ class BRFSSDataLoader:
     def __init__(self, data_dir: str, node_id: str):
         self.node_id = node_id
         self.data_dir = Path(data_dir)
-        csv_candidates = list(self.data_dir.glob("*.csv"))
-        self.csv_path = csv_candidates[0] if csv_candidates else None
+
+        # ------------------------------------------------------------------
+        # Priority-ordered CSV selection — guarantees the real BRFSS file is
+        # always preferred over the synthetic fallback regardless of filesystem
+        # creation-time order (which varies across OS / Docker volume drivers).
+        #
+        # Priority:
+        #   1. brfss_{NODE_ID}.csv   — state-specific real BRFSS data (ideal)
+        #   2. Any *.csv whose name does NOT contain "synthetic"  — other real data
+        #   3. brfss_synthetic.csv   — dev / CI fallback (logged as WARNING)
+        #   4. No CSV at all         — pure in-memory synthetic generator
+        # ------------------------------------------------------------------
+        all_csvs = list(self.data_dir.glob("*.csv"))
+
+        # Tier 1: exact state match
+        preferred = self.data_dir / f"brfss_{node_id}.csv"
+        if preferred.exists():
+            self.csv_path = preferred
+
+        # Tier 2: any non-synthetic CSV present
+        elif any(f for f in all_csvs if "synthetic" not in f.name.lower()):
+            non_synthetic = sorted(
+                [f for f in all_csvs if "synthetic" not in f.name.lower()]
+            )
+            self.csv_path = non_synthetic[0]
+            logger.warning(
+                "[%s] State-specific CSV not found; using %s as fallback",
+                node_id, self.csv_path.name,
+            )
+
+        # Tier 3: only a synthetic CSV exists — dev/CI mode
+        elif all_csvs:
+            self.csv_path = sorted(all_csvs)[0]
+            logger.warning(
+                "[%s] No real BRFSS CSV found — falling back to synthetic data (%s). "
+                "Schema will have 20 generic features instead of 15 BRFSS features. "
+                "Run scripts/download_real_brfss.R to obtain real data.",
+                node_id, self.csv_path.name,
+            )
+
+        # Tier 4: no CSV at all — pure in-memory synthetic
+        else:
+            self.csv_path = None
+
 
         if self.csv_path:
             logger.info("[%s] Loading real CSV: %s", node_id, self.csv_path)

@@ -13,6 +13,7 @@ import pandas as pd
 from typing import Optional
 
 try:
+    # pyrefly: ignore [missing-import]
     from river.drift import ADWIN
     from river.drift import KSWIN
     RIVER_AVAILABLE = True

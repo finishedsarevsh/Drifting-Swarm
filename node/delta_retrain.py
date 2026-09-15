@@ -25,18 +25,29 @@ from data_loader import TARGET_COL, YEAR_COL
 logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------
-# LightGBM hyperparameters (fixed for Phase 1)
+# LightGBM hyperparameters — size-constrained for Phase 1
+# ------------------------------------------------------------------
+# Design constraints:
+#   • Pickled model must stay < 5 MB (so ΔW codec output < ~1 MB)
+#   • Node containers have ~512 MB RAM — model must never OOM
+#   • Warm-start tree growth is capped at MAX_TOTAL_TREES
 # ------------------------------------------------------------------
 LGB_PARAMS: Dict[str, Any] = {
     "objective": "binary",
     "metric": "binary_logloss",
     "learning_rate": 0.05,
-    "num_leaves": 31,
-    "n_estimators": 50,       # trees added per delta-retrain step
+    "n_estimators": 50,           # trees added per delta-retrain step
+    "max_depth": 6,               # hard cap on tree depth (default: -1 = unlimited)
+    "num_leaves": 31,             # must be <= 2^max_depth (2^6 = 64, so 31 is fine)
+    "max_bin": 63,                # down from default 255 — cuts histogram memory 4x
+    "min_child_samples": 50,      # prevents micro-splits on tiny partitions
     "verbose": -1,
-    "n_jobs": -1,
+    "n_jobs": 1,                  # single-threaded — predictable memory, no thread OOM
     "random_state": 42,
 }
+# Absolute ceiling on accumulated trees across all warm-start rounds.
+# 200 trees × depth-6 × 31 leaves × 15 features ≈ 2-4 MB pickled.
+MAX_TOTAL_TREES = 200
 VALIDATION_FRACTION = 0.20
 MIN_TRAIN_ROWS = 30
 
@@ -130,9 +141,15 @@ class DeltaRetrain:
 
         # ---- LightGBM warm-start ----
         if warm_start and self._model is not None and isinstance(self._model, lgb.LGBMClassifier):
-            logger.info("[%s] Warm-starting from existing model", self.node_id)
+            existing_trees = getattr(self._model, "n_estimators_", LGB_PARAMS["n_estimators"])
+            new_total = min(existing_trees + LGB_PARAMS["n_estimators"], MAX_TOTAL_TREES)
+            logger.info(
+                "[%s] Warm-starting: %d existing trees + %d new = %d total (cap=%d)",
+                self.node_id, existing_trees, LGB_PARAMS["n_estimators"],
+                new_total, MAX_TOTAL_TREES,
+            )
             model = lgb.LGBMClassifier(**LGB_PARAMS)
-            model.set_params(n_estimators=self._model.n_estimators_ + LGB_PARAMS["n_estimators"])
+            model.set_params(n_estimators=new_total)
             model.fit(
                 X_train, y_train,
                 init_model=self._model.booster_,
