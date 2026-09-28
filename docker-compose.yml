@@ -1,4 +1,4 @@
-﻿
+
 # =====================================================================
 # DTASS Phase 1 â€” Local docker-compose Swarm Simulation
 # 6-node representative simulation, single host, no cloud dependency
@@ -64,6 +64,7 @@ services:
     build:
       context: ./ledger-service
       dockerfile: Dockerfile
+    image: dtass-ledger:latest
     container_name: dtass-ledger
     ports:
       - "8000:8000"
@@ -105,6 +106,7 @@ services:
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   node-ca:
+    image: dtass-node:latest
     build:
       context: ./node
       dockerfile: Dockerfile
@@ -124,9 +126,7 @@ services:
     restart: "no"   # Nodes are one-shot batch jobs; exit 0 must not trigger a restart.
 
   node-tx:
-    build:
-      context: ./node
-      dockerfile: Dockerfile
+    image: dtass-node:latest
     container_name: dtass-node-tx
     environment:
       <<: *node-env
@@ -143,9 +143,7 @@ services:
     restart: "no"   # Nodes are one-shot batch jobs; exit 0 must not trigger a restart.
 
   node-oh:
-    build:
-      context: ./node
-      dockerfile: Dockerfile
+    image: dtass-node:latest
     container_name: dtass-node-oh
     environment:
       <<: *node-env
@@ -162,15 +160,13 @@ services:
     restart: "no"   # Nodes are one-shot batch jobs; exit 0 must not trigger a restart.
 
   node-wy:
-    build:
-      context: ./node
-      dockerfile: Dockerfile
+    image: dtass-node:latest
     container_name: dtass-node-wy
     environment:
       <<: *node-env
       NODE_ID: WY
       DATA_DIR: /app/data
-      BATCH_SLEEP_S: "3"   # WY is small â€” slow it down slightly
+      BATCH_SLEEP_S: "3"   # WY is small — slow it down slightly
     volumes:
       - ./data/WY:/app/data:ro
       - ./keys:/app/keys:ro
@@ -182,9 +178,7 @@ services:
     restart: "no"   # Nodes are one-shot batch jobs; exit 0 must not trigger a restart.
 
   node-ny:
-    build:
-      context: ./node
-      dockerfile: Dockerfile
+    image: dtass-node:latest
     container_name: dtass-node-ny
     environment:
       <<: *node-env
@@ -201,9 +195,7 @@ services:
     restart: "no"   # Nodes are one-shot batch jobs; exit 0 must not trigger a restart.
 
   node-nj:
-    build:
-      context: ./node
-      dockerfile: Dockerfile
+    image: dtass-node:latest
     container_name: dtass-node-nj
     environment:
       <<: *node-env

@@ -123,6 +123,8 @@ python scripts/gen_synthetic_data.py
 docker compose build
 ```
 
+> **Note:** The compose stack builds two images: `dtass-ledger:latest` and `dtass-node:latest`. The shared `dtass-node` image is built once (via `node-ca`) and reused across all 6 state nodes (`node-tx`, `node-oh`, `node-wy`, `node-ny`, `node-nj`), eliminating redundant builds and excessive RAM usage.
+
 To force a clean rebuild (e.g. after changing `requirements.txt`):
 
 ```powershell
@@ -358,3 +360,5 @@ drifting-swarm/
 | Stat panels empty (Retrain Events etc.) | Node exited before Prometheus scraped | The 45s hold in `main.py` fixes this — rebuild with `docker compose build` |
 | `river.drift` not found (IDE warning) | `river` not installed in local Windows Python | IDE warning only — runs fine inside Docker. Silence with `pip install river` |
 | Grafana not reachable on port 3000 | Port conflict on Windows | Grafana is mapped to **port 3005** — use http://localhost:3005 |
+| `fatal error: runtime: cannot allocate memory` or BuildKit EOF during build | WSL2 memory limit exceeded during large ML package installation | Add `[wsl2]` with `swap=4GB` (and `swapfile=...`) in `~/.wslconfig` and restart WSL (`wsl --shutdown`) |
+| `failed to commit snapshot ... input/output error` during pull | Host drive (C:) ran out of disk space for Docker VHDX | Move Docker Desktop disk image location via Settings → Resources → Advanced → Disk image location (e.g. to `E:\Docker`) |
