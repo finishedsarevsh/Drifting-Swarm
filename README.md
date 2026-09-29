@@ -176,7 +176,8 @@ Key log lines to look for:
 
 | Service | URL | Credentials |
 |---|---|---|
-| **Grafana** (DTASS monitor) | http://localhost:3005 | `admin` / `dtass2024` |
+| **The Drifting Swarm Web UI** | http://localhost:3001 | — |
+| **Grafana** (Swarm monitor) | http://localhost:3005 | `admin` / `dtass2024` |
 | **MLflow** (experiment log) | http://localhost:5000 | — |
 | **Ledger API docs** | http://localhost:8000/docs | — |
 | **Prometheus** | http://localhost:9090 | — |
@@ -185,6 +186,24 @@ Key log lines to look for:
 In Grafana, open **DTASS Phase 1 — Swarm Monitor**. Set the time range to
 **Last 30 minutes**. All five panels should populate within one full simulation
 cycle (~60–90 seconds per run including the 45s hold).
+
+---
+
+### Step 6 — Launch the Interactive Web Demonstrator
+
+The interactive pitch deck and live telemetry dashboard runs as a React/Vite web application:
+
+```powershell
+cd ui
+npm install
+npm run dev
+```
+
+Open [http://localhost:3001](http://localhost:3001) in your browser. It features:
+- Interactive ML decision boundary and concept drift simulations
+- 3D Three.js orbital methodology visualization
+- Real-time telemetry streaming from Prometheus, SQLite ledger arbitration, and Mosquitto MQTT
+- Enterprise pitch sections detailing cloud migration and sponsor deliverables
 
 ---
 
