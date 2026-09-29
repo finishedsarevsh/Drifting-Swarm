@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { useIntersection } from '../hooks/useIntersection'
 import { NODES } from '../data/nodes'
-import { MapPin, Sliders, ListFilter, ShieldCheck, Database } from 'lucide-react'
+import { MapPin, Sliders, ListFilter, ShieldCheck, Database, ExternalLink } from 'lucide-react'
 
 // Accurate coordinate positions on a 960x540 continental US projection
 const CITY_NODES: Record<string, { x: number; y: number; city: string; state: string; role: string }> = {
@@ -73,6 +73,58 @@ export function ArchitectureMap({ id }: { id: string }) {
           <p style={{ color: 'var(--text-secondary)', maxWidth: 640, margin: '0 auto', lineHeight: 1.75, fontSize: '1.05rem' }}>
             6 distributed state nodes across the continental US processing real annual CDC BRFSS cohorts (1999–2024). Click any city on the map or list to inspect its configuration and model parameters.
           </p>
+
+          {/* Official CDC Dataset Links */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginTop: 18, flexWrap: 'wrap' }}>
+            <a
+              href="https://www.cdc.gov/brfss/annual_data/annual_data.htm"
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 7,
+                padding: '7px 16px',
+                borderRadius: 100,
+                background: 'var(--blue-pale)',
+                border: '1.5px solid rgba(37, 99, 235, 0.35)',
+                color: 'var(--blue)',
+                textDecoration: 'none',
+                fontWeight: 600,
+                fontSize: 12,
+                boxShadow: 'var(--shadow-xs)',
+                transition: 'all 0.2s ease',
+              }}
+            >
+              <Database size={14} />
+              <span>Official CDC BRFSS Survey Dataset (1999–2024)</span>
+              <ExternalLink size={12} />
+            </a>
+
+            <a
+              href="https://data.cdc.gov/"
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 7,
+                padding: '7px 16px',
+                borderRadius: 100,
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                color: 'var(--text-secondary)',
+                textDecoration: 'none',
+                fontWeight: 600,
+                fontSize: 12,
+                boxShadow: 'var(--shadow-xs)',
+                transition: 'all 0.2s ease',
+              }}
+            >
+              <span>CDC Open Health Data Portal (data.cdc.gov)</span>
+              <ExternalLink size={12} />
+            </a>
+          </div>
         </motion.div>
 
         {/* Map + Node Selector Grid */}

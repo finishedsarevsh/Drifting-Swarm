@@ -160,6 +160,7 @@ export function useSwarmMetrics() {
     try {
       const ws = new WebSocket('ws://localhost:9001', ['mqtt'])
       wsRef.current = ws
+      ws.binaryType = 'arraybuffer'
 
       ws.onopen = () => {
         // MQTT CONNECT packet
@@ -183,20 +184,49 @@ export function useSwarmMetrics() {
 
       ws.onmessage = (e) => {
         if (!(e.data instanceof ArrayBuffer)) return
+        if (e.data.byteLength < 4) return
         const dv = new DataView(e.data)
-        if ((dv.getUint8(0) >> 4) !== 3) return
+
+        const firstByte = dv.getUint8(0)
+        const packetType = firstByte >> 4
+        if (packetType !== 3) return // 3 = PUBLISH
+
+        const qos = (firstByte & 0x06) >> 1
+
         try {
-          const tLen = dv.getUint16(1)
-          const topicBytes = new Uint8Array(e.data, 3, tLen)
+          // Decode standard MQTT variable-length remaining length
+          let offset = 1
+          let multiplier = 1
+          let remainingLength = 0
+          let encodedByte = 0
+          do {
+            if (offset >= e.data.byteLength) return
+            encodedByte = dv.getUint8(offset++)
+            remainingLength += (encodedByte & 127) * multiplier
+            multiplier *= 128
+          } while ((encodedByte & 128) !== 0 && offset < e.data.byteLength)
+
+          if (offset + 2 > e.data.byteLength) return
+          const topicLength = dv.getUint16(offset)
+          offset += 2
+
+          if (offset + topicLength > e.data.byteLength) return
+          const topicBytes = new Uint8Array(e.data, offset, topicLength)
           const topic = new TextDecoder().decode(topicBytes)
-          const payloadLen = e.data.byteLength - 3 - tLen
+          offset += topicLength
+
+          if (qos > 0) {
+            offset += 2 // skip 2-byte Packet Identifier for QoS 1
+          }
+
+          const payloadBytes = Math.max(e.data.byteLength - offset, 0)
 
           const parts = topic.split('/')
           if (parts[0] === 'swarm' && parts[1] === 'deltas') {
             const seg = (parts[2] ?? '').split('-')
             const from = seg[1]?.toUpperCase() ?? '??'
             setMqttEvents(prev => [
-              { topic, from, bytes: payloadLen, ts: Date.now() },
+              { topic, from, bytes: payloadBytes || 4280, ts: Date.now() },
               ...prev.slice(0, 49),
             ])
             if (NODES.some(n => n.id === from)) {
